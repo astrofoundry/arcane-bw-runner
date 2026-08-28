@@ -38,7 +38,9 @@ RUN apt-get update \
     && install -d -o 1000 -g 1000 -m 0755 /workspace
 COPY --from=build /out/arcane-bw-runner /usr/local/bin/arcane-bw-runner
 COPY --from=bitwarden /out/bw /usr/local/bin/bw
-RUN test "$(/usr/local/bin/bw --version)" = "$BW_VERSION"
+COPY THIRD_PARTY_NOTICES.md /usr/share/doc/arcane-bw-runner/THIRD_PARTY_NOTICES.md
+RUN test "$(/usr/local/bin/bw --version)" = "$BW_VERSION" \
+    && test -f /usr/share/common-licenses/GPL-3
 ENV HOME=/home/runner
 USER 1000:1000
 WORKDIR /workspace

@@ -98,8 +98,6 @@ services:
       - ./.env.runtime
 ```
 
-For an existing project, migrate in two syncs. Add and run the hook while the old secret source still works. Then change Compose to load `.env.runtime`.
-
 ### 6. Configure Arcane
 
 Open **Environments → your environment → Security → Lifecycle**. Enable lifecycle hooks and set a maximum timeout of at least 60 seconds.
@@ -131,6 +129,12 @@ Run a manual GitOps sync before you enable auto sync. Check these results:
 
 Enable auto sync after these checks pass.
 
+## Secret updates and project removal
+
+After you change a vault field, redeploy the project through Arcane. A GitOps sync with no Git change does not run the hook.
+
+After you delete a project, check its managed directory for `.env.runtime`. Delete that file if Arcane left it behind. GitOps cannot remove a generated file after the project no longer syncs.
+
 ## Input rules
 
 The runner accepts one `--server`, one `--item-id`, and one or more `--field` arguments.
@@ -146,10 +150,14 @@ The runner never prints Bitwarden CLI output or secret values.
 
 Each push to `main` publishes `latest` and `sha-<commit>`. A `v*` tag also publishes semantic version tags.
 
-Arcane can retain a local copy of `latest`. Pull the image through Arcane before you test a new runner release.
+Arcane can retain a local copy of `latest`. Open Arcane's **Images** page and pull `ghcr.io/astrofoundry/arcane-bw-runner:latest` before you test a new release.
 
 Dependabot proposes updates for the base images and GitHub Actions. Update `BW_VERSION` and both archive digests together when Bitwarden releases a new CLI version.
 
 ## Development
 
 GitHub Actions runs formatting checks, `go test ./...`, and `go vet ./...`. It builds Linux images for AMD64 and ARM64 without a local Go installation.
+
+## License
+
+The runner source uses the MIT license. The image also contains the Bitwarden CLI under the GNU General Public License version 3. See `THIRD_PARTY_NOTICES.md` for its source and license details.

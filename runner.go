@@ -156,8 +156,12 @@ func checkServer(value string) error {
 }
 
 func run(ctx context.Context, config config, commands commandRunner, paths runtimePaths, uid int) error {
-	if uid != runnerUID {
-		return fmt.Errorf("runner must use UID %d", runnerUID)
+	return runForUID(ctx, config, commands, paths, uid, runnerUID)
+}
+
+func runForUID(ctx context.Context, config config, commands commandRunner, paths runtimePaths, uid int, expectedUID int) error {
+	if uid != expectedUID {
+		return fmt.Errorf("runner must use UID %d", expectedUID)
 	}
 	if err := checkSecureDirectory(paths.credentialsDirectory, uid); err != nil {
 		return err

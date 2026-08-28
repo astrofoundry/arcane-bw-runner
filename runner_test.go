@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -179,11 +180,126 @@ func TestRunRejectsWrongUID(t *testing.T) {
 	}
 }
 
+func TestRunWritesSelectedVaultFields(t *testing.T) {
+	paths := testRuntimePaths(t)
+	commands := &fakeCommandRunner{
+		responses: map[string][]byte{
+			"unlock": []byte("session-token\n"),
+			"get":    []byte(`{"fields":[{"name":"API_TOKEN","value":"secret-value","type":1},{"name":"IGNORED","value":"not-selected","type":1}]}`),
+		},
+	}
+	configuration := config{
+		server:     "https://vault.example.com",
+		itemID:     "123e4567-e89b-12d3-a456-426614174000",
+		fieldNames: []string{"API_TOKEN"},
+	}
+
+	err := runForUID(context.Background(), configuration, commands, paths, os.Geteuid(), os.Geteuid())
+	if err != nil {
+		t.Fatalf("runForUID returned an error: %v", err)
+	}
+	content, err := os.ReadFile(paths.output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "API_TOKEN=\"secret-value\"\n" {
+		t.Fatalf("runForUID wrote %q", content)
+	}
+	wantCalls := [][]string{
+		{"config", "server", "https://vault.example.com"},
+		{"login", "--apikey", "--quiet"},
+		{"unlock", "--passwordfile", paths.masterPassword, "--raw"},
+		{"sync"},
+		{"get", "item", "123e4567-e89b-12d3-a456-426614174000"},
+		{"lock"},
+		{"logout"},
+	}
+	if !reflect.DeepEqual(commands.calls, wantCalls) {
+		t.Fatalf("runForUID called %#v", commands.calls)
+	}
+	for index, arguments := range commands.calls {
+		if strings.Contains(strings.Join(arguments, "\n"), "secret-value") {
+			t.Fatalf("call %d included a vault secret in its arguments", index)
+		}
+	}
+}
+
+func TestRunReportsBitwardenCommandFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		command    string
+		wantError  string
+		wantLogout bool
+	}{
+		{name: "config", command: "config", wantError: "could not configure the Bitwarden server"},
+		{name: "login", command: "login", wantError: "could not log in to Bitwarden"},
+		{name: "unlock", command: "unlock", wantError: "could not unlock the Bitwarden vault", wantLogout: true},
+		{name: "sync", command: "sync", wantError: "could not sync the Bitwarden vault", wantLogout: true},
+		{name: "get", command: "get", wantError: "could not read the Bitwarden item", wantLogout: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			paths := testRuntimePaths(t)
+			commands := &fakeCommandRunner{
+				responses: map[string][]byte{"unlock": []byte("session-token")},
+				failures:  map[string]error{test.command: errors.New("command failed")},
+			}
+			configuration := config{
+				server:     "https://vault.example.com",
+				itemID:     "123e4567-e89b-12d3-a456-426614174000",
+				fieldNames: []string{"API_TOKEN"},
+			}
+
+			err := runForUID(context.Background(), configuration, commands, paths, os.Geteuid(), os.Geteuid())
+			if err == nil || err.Error() != test.wantError {
+				t.Fatalf("runForUID returned %v", err)
+			}
+			calledLogout := false
+			for _, call := range commands.calls {
+				if len(call) == 1 && call[0] == "logout" {
+					calledLogout = true
+				}
+			}
+			if calledLogout != test.wantLogout {
+				t.Fatalf("logout called: %t, want %t", calledLogout, test.wantLogout)
+			}
+		})
+	}
+}
+
+func testRuntimePaths(t *testing.T) runtimePaths {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clientEnvironment := filepath.Join(directory, "client.env")
+	masterPassword := filepath.Join(directory, "master-password")
+	if err := os.WriteFile(clientEnvironment, []byte("BW_CLIENTID=user.id\nBW_CLIENTSECRET=client-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(masterPassword, []byte("master-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return runtimePaths{
+		credentialsDirectory: directory,
+		clientEnvironment:    clientEnvironment,
+		masterPassword:       masterPassword,
+		output:               filepath.Join(t.TempDir(), ".env.runtime"),
+	}
+}
+
 type fakeCommandRunner struct {
-	calls [][]string
+	calls     [][]string
+	responses map[string][]byte
+	failures  map[string]error
 }
 
 func (runner *fakeCommandRunner) Run(_ context.Context, arguments []string, _ []string) ([]byte, error) {
 	runner.calls = append(runner.calls, append([]string(nil), arguments...))
-	return nil, nil
+	command := arguments[0]
+	if err := runner.failures[command]; err != nil {
+		return nil, err
+	}
+	return runner.responses[command], nil
 }
