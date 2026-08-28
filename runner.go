@@ -51,9 +51,9 @@ type config struct {
 
 type runtimePaths struct {
 	credentialsDirectory string
-	clientEnvironment     string
-	masterPassword        string
-	output                string
+	clientEnvironment    string
+	masterPassword       string
+	output               string
 }
 
 type credentials struct {
@@ -98,9 +98,9 @@ func (execCommandRunner) Run(ctx context.Context, arguments []string, environmen
 func defaultRuntimePaths() runtimePaths {
 	return runtimePaths{
 		credentialsDirectory: "/run/bwcreds",
-		clientEnvironment:     "/run/bwcreds/client.env",
-		masterPassword:        "/run/bwcreds/master-password",
-		output:                ".env.runtime",
+		clientEnvironment:    "/run/bwcreds/client.env",
+		masterPassword:       "/run/bwcreds/master-password",
+		output:               ".env.runtime",
 	}
 }
 
