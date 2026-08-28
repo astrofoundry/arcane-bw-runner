@@ -38,7 +38,7 @@ Accept and confirm the organization invitation before you continue.
 
 Create one organization-owned Secure Note per container. Put it in the collection from the previous step.
 
-Add each container environment variable as a Hidden custom field. Field names must match Compose environment variable names. Values must be non-empty and single-line.
+Add each secret as a Hidden custom field. Use `--alias` when a container needs a different environment variable name. Values must be non-empty and single-line.
 
 Copy the item's lowercase UUID. The runner rejects item names so that renames and duplicate names cannot select a different item.
 
@@ -83,7 +83,8 @@ exec /usr/local/bin/arcane-bw-runner \
   --server "$BW_SERVER" \
   --item-id "123e4567-e89b-12d3-a456-426614174000" \
   --field DATABASE_PASSWORD \
-  --field API_TOKEN
+  --field API_TOKEN \
+  --alias DATABASE_PASSWORD=MYSQL_PASSWORD
 ```
 
 Replace the UUID and field names. Keep the item UUID in Git because it identifies the item but does not decrypt it.
@@ -137,12 +138,16 @@ After you delete a project, check its managed directory for `.env.runtime`. Dele
 
 ## Input rules
 
-The runner accepts one `--server`, one `--item-id`, and one or more `--field` arguments.
+The runner accepts one `--server`, one `--item-id`, and one or more `--field` or `--alias` arguments.
 
 - `--server` must be an HTTPS URL.
 - `--item-id` must be a lowercase UUID.
-- Each field must exist once, use the Hidden type, and contain a non-empty single-line value.
-- Field names must use shell environment variable syntax.
+- `--field NAME` reads and writes the same name.
+- `--alias SOURCE=TARGET` reads `SOURCE` and writes only `TARGET`.
+- Use both forms for the same source when both output names are needed.
+- Each source must exist once, use the Hidden type, and contain a non-empty single-line value.
+- Source and output names must use shell environment variable syntax.
+- Each output name must be unique.
 
 The runner never prints Bitwarden CLI output or secret values.
 

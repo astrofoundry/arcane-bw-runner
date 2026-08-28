@@ -47,6 +47,12 @@ type config struct {
 	server     string
 	itemID     string
 	fieldNames []string
+	aliases    []fieldAlias
+}
+
+type fieldAlias struct {
+	source string
+	target string
 }
 
 type runtimePaths struct {
@@ -107,11 +113,13 @@ func defaultRuntimePaths() runtimePaths {
 func parseConfig(arguments []string) (config, error) {
 	var parsed config
 	var fields stringList
+	var aliases stringList
 	flags := flag.NewFlagSet("arcane-bw-runner", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&parsed.server, "server", "", "Vaultwarden server URL")
 	flags.StringVar(&parsed.itemID, "item-id", "", "Bitwarden item UUID")
 	flags.Var(&fields, "field", "hidden custom field to export")
+	flags.Var(&aliases, "alias", "hidden custom field and output name in SOURCE=TARGET form")
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return config{}, errHelpRequested
@@ -127,8 +135,8 @@ func parseConfig(arguments []string) (config, error) {
 	if !uuidPattern.MatchString(parsed.itemID) {
 		return config{}, errors.New("--item-id must be a lowercase UUID")
 	}
-	if len(fields) == 0 {
-		return config{}, errors.New("at least one --field is needed")
+	if len(fields) == 0 && len(aliases) == 0 {
+		return config{}, errors.New("at least one --field or --alias is needed")
 	}
 	seen := make(map[string]struct{}, len(fields))
 	for _, name := range fields {
@@ -139,6 +147,24 @@ func parseConfig(arguments []string) (config, error) {
 			return config{}, fmt.Errorf("duplicate field name %q", name)
 		}
 		seen[name] = struct{}{}
+	}
+	outputs := make(map[string]struct{}, len(fields)+len(aliases))
+	for name := range seen {
+		outputs[name] = struct{}{}
+	}
+	for _, definition := range aliases {
+		source, target, found := strings.Cut(definition, "=")
+		if !found || strings.Contains(target, "=") {
+			return config{}, fmt.Errorf("invalid alias %q", definition)
+		}
+		if !fieldNamePattern.MatchString(source) || !fieldNamePattern.MatchString(target) {
+			return config{}, fmt.Errorf("invalid alias %q", definition)
+		}
+		if _, exists := outputs[target]; exists {
+			return config{}, fmt.Errorf("duplicate output name %q", target)
+		}
+		outputs[target] = struct{}{}
+		parsed.aliases = append(parsed.aliases, fieldAlias{source: source, target: target})
 	}
 	parsed.fieldNames = append([]string(nil), fields...)
 	return parsed, nil
@@ -219,7 +245,11 @@ func runForUID(ctx context.Context, config config, commands commandRunner, paths
 	if err != nil {
 		return errors.New("could not read the Bitwarden item")
 	}
-	fields, err := selectSecretFields(itemJSON, config.fieldNames)
+	fields, err := selectSecretFields(itemJSON, requestedFieldNames(config))
+	if err != nil {
+		return err
+	}
+	fields, err = buildOutputFields(fields, config.fieldNames, config.aliases)
 	if err != nil {
 		return err
 	}
@@ -231,6 +261,47 @@ func runForUID(ctx context.Context, config config, commands commandRunner, paths
 		return err
 	}
 	return nil
+}
+
+func requestedFieldNames(config config) []string {
+	result := make([]string, 0, len(config.fieldNames)+len(config.aliases))
+	seen := make(map[string]struct{}, cap(result))
+	for _, name := range config.fieldNames {
+		if _, exists := seen[name]; !exists {
+			seen[name] = struct{}{}
+			result = append(result, name)
+		}
+	}
+	for _, alias := range config.aliases {
+		if _, exists := seen[alias.source]; !exists {
+			seen[alias.source] = struct{}{}
+			result = append(result, alias.source)
+		}
+	}
+	return result
+}
+
+func buildOutputFields(fields []secretField, names []string, aliases []fieldAlias) ([]secretField, error) {
+	values := make(map[string]string, len(fields))
+	for _, field := range fields {
+		values[field.name] = field.value
+	}
+	result := make([]secretField, 0, len(names)+len(aliases))
+	for _, name := range names {
+		value, exists := values[name]
+		if !exists {
+			return nil, fmt.Errorf("selected field %q is unavailable", name)
+		}
+		result = append(result, secretField{name: name, value: value})
+	}
+	for _, alias := range aliases {
+		value, exists := values[alias.source]
+		if !exists {
+			return nil, fmt.Errorf("selected field %q is unavailable", alias.source)
+		}
+		result = append(result, secretField{name: alias.target, value: value})
+	}
+	return result, nil
 }
 
 func checkSecureDirectory(path string, uid int) error {

@@ -16,6 +16,7 @@ func TestParseConfig(t *testing.T) {
 		"--item-id", "123e4567-e89b-12d3-a456-426614174000",
 		"--field", "API_TOKEN",
 		"--field", "DATABASE_URL",
+		"--alias", "API_TOKEN=LEGACY_API_TOKEN",
 	})
 	if err != nil {
 		t.Fatalf("parseConfig returned an error: %v", err)
@@ -26,6 +27,9 @@ func TestParseConfig(t *testing.T) {
 	if !reflect.DeepEqual(parsed.fieldNames, []string{"API_TOKEN", "DATABASE_URL"}) {
 		t.Fatalf("parseConfig returned the wrong fields: %#v", parsed.fieldNames)
 	}
+	if !reflect.DeepEqual(parsed.aliases, []fieldAlias{{source: "API_TOKEN", target: "LEGACY_API_TOKEN"}}) {
+		t.Fatalf("parseConfig returned the wrong aliases: %#v", parsed.aliases)
+	}
 }
 
 func TestParseConfigRejectsUnsafeInput(t *testing.T) {
@@ -34,11 +38,41 @@ func TestParseConfigRejectsUnsafeInput(t *testing.T) {
 		{"--server", "https://vault.example.com", "--item-id", "item-name", "--field", "API_TOKEN"},
 		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--field", "BAD-NAME"},
 		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--field", "API_TOKEN", "--field", "API_TOKEN"},
+		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--alias", "MISSING_SEPARATOR"},
+		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--alias", "API_TOKEN=BAD-NAME"},
+		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--field", "API_TOKEN", "--alias", "OTHER=API_TOKEN"},
+		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--alias", "ONE=OUTPUT", "--alias", "TWO=OUTPUT"},
 	}
 	for _, arguments := range tests {
 		if _, err := parseConfig(arguments); err == nil {
 			t.Fatalf("parseConfig accepted unsafe input: %#v", arguments)
 		}
+	}
+}
+
+func TestBuildOutputFields(t *testing.T) {
+	selected := []secretField{
+		{name: "DB_PASSWORD", value: "database-secret"},
+		{name: "SMTP_PASSWORD", value: "mail-secret"},
+	}
+	fields, err := buildOutputFields(
+		selected,
+		[]string{"DB_PASSWORD"},
+		[]fieldAlias{
+			{source: "DB_PASSWORD", target: "MYSQL_PASSWORD"},
+			{source: "SMTP_PASSWORD", target: "MAIL_PASSWORD"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("buildOutputFields returned an error: %v", err)
+	}
+	want := []secretField{
+		{name: "DB_PASSWORD", value: "database-secret"},
+		{name: "MYSQL_PASSWORD", value: "database-secret"},
+		{name: "MAIL_PASSWORD", value: "mail-secret"},
+	}
+	if !reflect.DeepEqual(fields, want) {
+		t.Fatalf("buildOutputFields returned %#v", fields)
 	}
 }
 
@@ -192,6 +226,7 @@ func TestRunWritesSelectedVaultFields(t *testing.T) {
 		server:     "https://vault.example.com",
 		itemID:     "123e4567-e89b-12d3-a456-426614174000",
 		fieldNames: []string{"API_TOKEN"},
+		aliases:    []fieldAlias{{source: "API_TOKEN", target: "LEGACY_API_TOKEN"}},
 	}
 
 	err := runForUID(context.Background(), configuration, commands, paths, os.Geteuid(), os.Geteuid())
@@ -202,7 +237,7 @@ func TestRunWritesSelectedVaultFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "API_TOKEN=\"secret-value\"\n" {
+	if string(content) != "API_TOKEN=\"secret-value\"\nLEGACY_API_TOKEN=\"secret-value\"\n" {
 		t.Fatalf("runForUID wrote %q", content)
 	}
 	wantCalls := [][]string{
