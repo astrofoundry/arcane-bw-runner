@@ -33,12 +33,11 @@ exec /usr/local/bin/arcane-bw-runner \
 
 The runner writes `.env.runtime` with mode `0600`. It replaces the file only after Bitwarden returns every requested field.
 
-Load the file without interpolation:
+Load the file as a standard Compose environment file:
 
 ```yaml
 env_file:
-  - path: ./.env.runtime
-    format: raw
+  - ./.env.runtime
 ```
 
 The runner captures all Bitwarden CLI output. Arcane receives only a fixed success message or a fixed error.

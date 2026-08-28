@@ -219,7 +219,7 @@ func run(ctx context.Context, config config, commands commandRunner, paths runti
 	if err != nil {
 		return err
 	}
-	content, err := encodeRawEnvironment(fields)
+	content, err := encodeComposeEnvironment(fields)
 	if err != nil {
 		return err
 	}
@@ -378,7 +378,12 @@ func selectSecretFields(itemJSON []byte, requested []string) ([]secretField, err
 	return result, nil
 }
 
-func encodeRawEnvironment(fields []secretField) ([]byte, error) {
+func encodeComposeEnvironment(fields []secretField) ([]byte, error) {
+	escapeValue := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		`$`, `\$`,
+	)
 	var output strings.Builder
 	for _, field := range fields {
 		if !fieldNamePattern.MatchString(field.name) {
@@ -388,8 +393,9 @@ func encodeRawEnvironment(fields []secretField) ([]byte, error) {
 			return nil, fmt.Errorf("field %q contains a line break or null byte", field.name)
 		}
 		output.WriteString(field.name)
-		output.WriteByte('=')
-		output.WriteString(field.value)
+		output.WriteString(`="`)
+		output.WriteString(escapeValue.Replace(field.value))
+		output.WriteByte('"')
 		output.WriteByte('\n')
 	}
 	return []byte(output.String()), nil

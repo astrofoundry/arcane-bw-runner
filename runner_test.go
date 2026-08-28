@@ -109,16 +109,16 @@ func TestSelectSecretFieldsRejectsDuplicate(t *testing.T) {
 	}
 }
 
-func TestEncodeRawEnvironment(t *testing.T) {
-	content, err := encodeRawEnvironment([]secretField{{name: "API_TOKEN", value: "a $value with 'quotes'=and#hashes"}})
+func TestEncodeComposeEnvironment(t *testing.T) {
+	content, err := encodeComposeEnvironment([]secretField{{name: "API_TOKEN", value: `a $value with "quotes" and \slashes\`}})
 	if err != nil {
-		t.Fatalf("encodeRawEnvironment returned an error: %v", err)
+		t.Fatalf("encodeComposeEnvironment returned an error: %v", err)
 	}
-	if string(content) != "API_TOKEN=a $value with 'quotes'=and#hashes\n" {
-		t.Fatalf("encodeRawEnvironment returned %q", content)
+	if string(content) != "API_TOKEN=\"a \\$value with \\\"quotes\\\" and \\\\slashes\\\\\"\n" {
+		t.Fatalf("encodeComposeEnvironment returned %q", content)
 	}
-	if _, err := encodeRawEnvironment([]secretField{{name: "API_TOKEN", value: "line1\nline2"}}); err == nil {
-		t.Fatal("encodeRawEnvironment accepted a multiline value")
+	if _, err := encodeComposeEnvironment([]secretField{{name: "API_TOKEN", value: "line1\nline2"}}); err == nil {
+		t.Fatal("encodeComposeEnvironment accepted a multiline value")
 	}
 }
 
