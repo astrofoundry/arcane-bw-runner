@@ -1,25 +1,79 @@
 # Arcane Bitwarden runner
 
-This repository builds the lifecycle runner that writes container secrets before Arcane deploys a GitOps project.
+Arcane Bitwarden runner writes container secrets before Arcane deploys a GitOps project. It keeps plaintext secrets out of Git and Arcane's lifecycle settings.
 
-GitHub Actions tests the Go helper and publishes a multi-platform image to `ghcr.io/astrofoundry/arcane-bw-runner`.
+The image includes the Bitwarden CLI and a small Go helper. The helper logs in to Bitwarden or Vaultwarden, reads selected hidden fields, and writes a Compose environment file.
 
-## Vault item
+## How it works
 
-Create one Secure Note per container. Add each environment variable as a hidden custom field.
+1. Arcane starts this image as a pre-deploy lifecycle runner.
+2. Arcane mounts a dedicated account's credentials as read-only files.
+3. The runner reads one vault item by UUID and selects explicit hidden fields.
+4. The runner atomically writes `.env.runtime` with mode `0600`.
+5. Docker Compose loads `.env.runtime` through `env_file`.
 
-Use the item UUID in the hook. The runner rejects item names, visible fields, empty values, duplicate fields, and multiline values.
+The runner captures all Bitwarden CLI output. Arcane receives only a fixed success message or a fixed error.
 
-## Arcane hook
+## Requirements
 
-Mount the credential directory at `/run/bwcreds:ro`. The directory must use mode `0700`. Both files must use mode `0600` and UID `1000`:
+- An Arcane GitOps project sync with the whole project directory enabled.
+- Arcane lifecycle hooks enabled by an administrator.
+- A Bitwarden or Vaultwarden server that the lifecycle runner can reach through HTTPS.
+- A dedicated vault account with a personal API key and access to one organization collection.
+- A trusted Git repository. Anyone who can change the hook can read its mounted credentials.
+
+The Arcane host does not need the Bitwarden CLI. The runner image includes it.
+
+## Setup
+
+### 1. Create the vault account
+
+Create a dedicated Bitwarden or Vaultwarden account for Arcane. Add it to the organization as a User.
+
+Create one collection for container secrets. Grant the Arcane account only `View items` access to that collection. Do not grant edit or collection-management access. Do not use `View items, hidden passwords`, because the runner must read hidden fields.
+
+Accept and confirm the organization invitation before you continue.
+
+### 2. Create a vault item
+
+Create one organization-owned Secure Note per container. Put it in the collection from the previous step.
+
+Add each container environment variable as a Hidden custom field. Field names must match Compose environment variable names. Values must be non-empty and single-line.
+
+Copy the item's lowercase UUID. The runner rejects item names so that renames and duplicate names cannot select a different item.
+
+### 3. Create the personal API key
+
+Sign in as the Arcane account. Open **Settings → Security → Keys**, then select **View API key**.
+
+Save the personal `client_id`, personal `client_secret`, and master password. Do not use an organization API key. The personal API key logs in to the CLI, while the master password decrypts the vault.
+
+See [Bitwarden's personal API key guide](https://bitwarden.com/help/personal-api-key/).
+
+### 4. Write the host credential files
+
+Choose a protected directory on the Arcane host. The directory and both files must belong to UID `1000`.
 
 ```text
-/run/bwcreds/client.env
-/run/bwcreds/master-password
+/srv/arcane-bw-runner/
+├── client.env
+└── master-password
 ```
 
-Use the runner image and a project script like this:
+`client.env` must contain only these two lines:
+
+```dotenv
+BW_CLIENTID=user.example
+BW_CLIENTSECRET=replace-with-personal-client-secret
+```
+
+`master-password` must contain only the account master password.
+
+Set the directory mode to `0700`. Set both file modes to `0600`. Use a protected editor or secret-provisioning tool so the values do not enter shell history.
+
+### 5. Add the project files
+
+Place an executable `pre-deploy.sh` beside the project's `compose.yaml`:
 
 ```sh
 #!/bin/sh
@@ -28,22 +82,74 @@ set -eu
 exec /usr/local/bin/arcane-bw-runner \
   --server "$BW_SERVER" \
   --item-id "123e4567-e89b-12d3-a456-426614174000" \
-  --field CRAWL4AI_API_TOKEN
+  --field DATABASE_PASSWORD \
+  --field API_TOKEN
 ```
 
-The runner writes `.env.runtime` with mode `0600`. It replaces the file only after Bitwarden returns every requested field.
+Replace the UUID and field names. Keep the item UUID in Git because it identifies the item but does not decrypt it.
 
-Load the file as a standard Compose environment file:
+Load the generated file from Compose:
 
 ```yaml
-env_file:
-  - ./.env.runtime
+services:
+  app:
+    image: example/app:latest
+    env_file:
+      - ./.env.runtime
 ```
 
-The runner captures all Bitwarden CLI output. Arcane receives only a fixed success message or a fixed error.
+For an existing project, migrate in two syncs. Add and run the hook while the old secret source still works. Then change Compose to load `.env.runtime`.
+
+### 6. Configure Arcane
+
+Open **Environments → your environment → Security → Lifecycle**. Enable lifecycle hooks and set a maximum timeout of at least 60 seconds.
+
+Edit the project's GitOps sync and use these settings:
+
+```text
+Sync Files:             enabled
+Pre-deploy script:      pre-deploy.sh
+Runner image:           ghcr.io/astrofoundry/arcane-bw-runner:latest
+Timeout:                60
+Network:                bridge
+Environment variables: BW_SERVER=https://vault.example.com
+Extra mounts:           /srv/arcane-bw-runner:/run/bwcreds:ro
+```
+
+Use `bridge` because the runner needs outbound HTTPS access. Use another Docker network only when the vault server needs it.
+
+Arcane requires the script to be executable and inside the synced project directory. See [Arcane's lifecycle hook guide](https://getarcane.app/docs/guides/gitops-lifecycle-hooks).
+
+### 7. Run and check the deployment
+
+Run a manual GitOps sync before you enable auto sync. Check these results:
+
+- The hook status is `success` and its output is `wrote .env.runtime`.
+- `.env.runtime` uses mode `0600` and owner UID `1000`.
+- The container is healthy and receives the expected variables.
+- A missing item, field, or vault connection stops the deployment before Compose replaces the container.
+
+Enable auto sync after these checks pass.
+
+## Input rules
+
+The runner accepts one `--server`, one `--item-id`, and one or more `--field` arguments.
+
+- `--server` must be an HTTPS URL.
+- `--item-id` must be a lowercase UUID.
+- Each field must exist once, use the Hidden type, and contain a non-empty single-line value.
+- Field names must use shell environment variable syntax.
+
+The runner never prints Bitwarden CLI output or secret values.
 
 ## Image updates
 
 Each push to `main` publishes `latest` and `sha-<commit>`. A `v*` tag also publishes semantic version tags.
 
+Arcane can retain a local copy of `latest`. Pull the image through Arcane before you test a new runner release.
+
 Dependabot proposes updates for the base images and GitHub Actions. Update `BW_VERSION` and both archive digests together when Bitwarden releases a new CLI version.
+
+## Development
+
+GitHub Actions runs formatting checks, `go test ./...`, and `go vet ./...`. It builds Linux images for AMD64 and ARM64 without a local Go installation.
