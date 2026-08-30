@@ -22,8 +22,8 @@ import (
 
 const (
 	bitwardenBinary = "/usr/local/bin/bw"
-	defaultOutput    = ".env.runtime"
-	composeOutput    = ".env"
+	defaultOutput   = ".env.runtime"
+	composeOutput   = ".env"
 	hiddenFieldType = 1
 	runnerUID       = 1000
 )
