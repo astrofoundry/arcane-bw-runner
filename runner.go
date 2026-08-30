@@ -22,6 +22,8 @@ import (
 
 const (
 	bitwardenBinary = "/usr/local/bin/bw"
+	defaultOutput    = ".env.runtime"
+	composeOutput    = ".env"
 	hiddenFieldType = 1
 	runnerUID       = 1000
 )
@@ -46,6 +48,7 @@ func (values *stringList) Set(value string) error {
 type config struct {
 	server     string
 	itemID     string
+	output     string
 	fieldNames []string
 	aliases    []fieldAlias
 }
@@ -106,7 +109,7 @@ func defaultRuntimePaths() runtimePaths {
 		credentialsDirectory: "/run/bwcreds",
 		clientEnvironment:    "/run/bwcreds/client.env",
 		masterPassword:       "/run/bwcreds/master-password",
-		output:               ".env.runtime",
+		output:               defaultOutput,
 	}
 }
 
@@ -118,6 +121,7 @@ func parseConfig(arguments []string) (config, error) {
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&parsed.server, "server", "", "Vaultwarden server URL")
 	flags.StringVar(&parsed.itemID, "item-id", "", "Bitwarden item UUID")
+	flags.StringVar(&parsed.output, "output", defaultOutput, "output file (.env.runtime or .env)")
 	flags.Var(&fields, "field", "hidden custom field to export")
 	flags.Var(&aliases, "alias", "hidden custom field and output name in SOURCE=TARGET form")
 	if err := flags.Parse(arguments); err != nil {
@@ -134,6 +138,9 @@ func parseConfig(arguments []string) (config, error) {
 	}
 	if !uuidPattern.MatchString(parsed.itemID) {
 		return config{}, errors.New("--item-id must be a lowercase UUID")
+	}
+	if parsed.output != defaultOutput && parsed.output != composeOutput {
+		return config{}, errors.New("--output must be .env.runtime or .env")
 	}
 	if len(fields) == 0 && len(aliases) == 0 {
 		return config{}, errors.New("at least one --field or --alias is needed")
@@ -479,35 +486,35 @@ func encodeComposeEnvironment(fields []secretField) ([]byte, error) {
 func writeRuntimeEnvironment(path string, content []byte) error {
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return errors.New(".env.runtime must be a regular file")
+			return errors.New("output must be a regular file")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.New("could not check .env.runtime")
+		return errors.New("could not check the output file")
 	}
 	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".env.runtime.tmp-")
+	temporary, err := os.CreateTemp(directory, filepath.Base(path)+".tmp-")
 	if err != nil {
-		return errors.New("could not create .env.runtime")
+		return errors.New("could not create the output file")
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(0o600); err != nil {
 		temporary.Close()
-		return errors.New("could not secure .env.runtime")
+		return errors.New("could not secure the output file")
 	}
 	if _, err := temporary.Write(content); err != nil {
 		temporary.Close()
-		return errors.New("could not write .env.runtime")
+		return errors.New("could not write the output file")
 	}
 	if err := temporary.Sync(); err != nil {
 		temporary.Close()
-		return errors.New("could not sync .env.runtime")
+		return errors.New("could not sync the output file")
 	}
 	if err := temporary.Close(); err != nil {
-		return errors.New("could not close .env.runtime")
+		return errors.New("could not close the output file")
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return errors.New("could not replace .env.runtime")
+		return errors.New("could not replace the output file")
 	}
 	directoryHandle, err := os.Open(directory)
 	if err != nil {

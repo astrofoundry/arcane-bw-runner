@@ -12,6 +12,8 @@ The image includes the Bitwarden CLI and a small Go helper. The helper logs in t
 4. The runner atomically writes `.env.runtime` with mode `0600`.
 5. Docker Compose loads `.env.runtime` through `env_file`.
 
+Use `--output .env` when Compose needs the generated values during interpolation. The runner accepts only `.env.runtime` and `.env` as output names.
+
 The runner captures all Bitwarden CLI output. Arcane receives only a fixed success message or a fixed error.
 
 ## Requirements
@@ -87,6 +89,8 @@ exec /usr/local/bin/arcane-bw-runner \
   --alias DATABASE_PASSWORD=MYSQL_PASSWORD
 ```
 
+Add `--output .env` before the fields only when the Compose file uses `${VARIABLE}` interpolation. Never track the generated `.env` file.
+
 Replace the UUID and field names. Keep the item UUID in Git because it identifies the item but does not decrypt it.
 
 Load the generated file from Compose:
@@ -134,14 +138,15 @@ Enable auto sync after these checks pass.
 
 After you change a vault field, redeploy the project through Arcane. A GitOps sync with no Git change does not run the hook.
 
-After you delete a project, check its managed directory for `.env.runtime`. Delete that file if Arcane left it behind. GitOps cannot remove a generated file after the project no longer syncs.
+After you delete a project, check its managed directory for `.env.runtime` or `.env`. Delete generated files if Arcane left them behind. GitOps cannot remove a generated file after the project no longer syncs.
 
 ## Input rules
 
-The runner accepts one `--server`, one `--item-id`, and one or more `--field` or `--alias` arguments.
+The runner accepts one `--server`, one `--item-id`, an optional `--output`, and one or more `--field` or `--alias` arguments.
 
 - `--server` must be an HTTPS URL.
 - `--item-id` must be a lowercase UUID.
+- `--output` accepts `.env.runtime` or `.env`; the default is `.env.runtime`.
 - `--field NAME` reads and writes the same name.
 - `--alias SOURCE=TARGET` reads `SOURCE` and writes only `TARGET`.
 - Use both forms for the same source when both output names are needed.

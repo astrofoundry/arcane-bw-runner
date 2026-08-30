@@ -16,10 +16,12 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(context.Background(), config, execCommandRunner{}, defaultRuntimePaths(), os.Geteuid()); err != nil {
+	paths := defaultRuntimePaths()
+	paths.output = config.output
+	if err := run(context.Background(), config, execCommandRunner{}, paths, os.Geteuid()); err != nil {
 		fmt.Fprintf(os.Stderr, "arcane-bw-runner: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("wrote .env.runtime")
+	fmt.Printf("wrote %s\n", config.output)
 }

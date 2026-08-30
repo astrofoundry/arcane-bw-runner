@@ -24,11 +24,29 @@ func TestParseConfig(t *testing.T) {
 	if parsed.server != "https://vault.example.com" || parsed.itemID != "123e4567-e89b-12d3-a456-426614174000" {
 		t.Fatalf("parseConfig returned the wrong config: %#v", parsed)
 	}
+	if parsed.output != defaultOutput {
+		t.Fatalf("parseConfig returned output %q", parsed.output)
+	}
 	if !reflect.DeepEqual(parsed.fieldNames, []string{"API_TOKEN", "DATABASE_URL"}) {
 		t.Fatalf("parseConfig returned the wrong fields: %#v", parsed.fieldNames)
 	}
 	if !reflect.DeepEqual(parsed.aliases, []fieldAlias{{source: "API_TOKEN", target: "LEGACY_API_TOKEN"}}) {
 		t.Fatalf("parseConfig returned the wrong aliases: %#v", parsed.aliases)
+	}
+}
+
+func TestParseConfigAcceptsComposeOutput(t *testing.T) {
+	parsed, err := parseConfig([]string{
+		"--server", "https://vault.example.com",
+		"--item-id", "123e4567-e89b-12d3-a456-426614174000",
+		"--output", composeOutput,
+		"--field", "API_TOKEN",
+	})
+	if err != nil {
+		t.Fatalf("parseConfig returned an error: %v", err)
+	}
+	if parsed.output != composeOutput {
+		t.Fatalf("parseConfig returned output %q", parsed.output)
 	}
 }
 
@@ -42,6 +60,8 @@ func TestParseConfigRejectsUnsafeInput(t *testing.T) {
 		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--alias", "API_TOKEN=BAD-NAME"},
 		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--field", "API_TOKEN", "--alias", "OTHER=API_TOKEN"},
 		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--alias", "ONE=OUTPUT", "--alias", "TWO=OUTPUT"},
+		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--output", "secrets.env", "--field", "API_TOKEN"},
+		{"--server", "https://vault.example.com", "--item-id", "123e4567-e89b-12d3-a456-426614174000", "--output", "../.env", "--field", "API_TOKEN"},
 	}
 	for _, arguments := range tests {
 		if _, err := parseConfig(arguments); err == nil {
@@ -179,6 +199,28 @@ func TestWriteRuntimeEnvironment(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("writeRuntimeEnvironment used mode %04o", info.Mode().Perm())
+	}
+}
+
+func TestWriteRuntimeEnvironmentRejectsSymlink(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target")
+	path := filepath.Join(directory, composeOutput)
+	if err := os.WriteFile(target, []byte("OLD=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRuntimeEnvironment(path, []byte("NEW=value\n")); err == nil {
+		t.Fatal("writeRuntimeEnvironment accepted a symlink")
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "OLD=value\n" {
+		t.Fatalf("writeRuntimeEnvironment changed the symlink target to %q", content)
 	}
 }
 
